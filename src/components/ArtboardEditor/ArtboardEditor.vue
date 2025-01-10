@@ -1,14 +1,24 @@
 <template>
-    <div>c:</div>
+    <div>
+        <pre v-html="JSON.stringify(content, null, 2)"></pre>
+    </div>
 </template>
 
 <script lang="ts" setup>
-    import { ref, onMounted } from 'vue'
+    import { ref, watch, type PropType } from 'vue'
+
+    type StringKeyObject = {
+        [key: string|number]: any
+        slot?: any
+        [key: `slot_${string}`]: StringKeyObject[] | undefined
+    }
+
+
 
     const props = defineProps({
         content: {
             required: true,
-            type: Object,
+            type: Array as PropType<any[]>,
         },
         width: {
             required: true,
@@ -100,28 +110,32 @@
         },
     }
 
-    const elementPropConfig = {
+    const elementPropConfig: StringKeyObject = {
         // Required
         elementId: {
-            type: 'systemProp',
+            type: 'identifier',
             required: true,
-            validator: validators.string,
+            validator: validators.uuid,
             parameters: [],
             default(){ return utils.uuid() },
         },
         elementName: {
-            type: 'systemProp',
+            type: 'displayName',
             required: true,
             validator: validators.string,
             parameters: [],
             default(){ return 'Element' },
         },
         elementType: {
-            type: 'systemProp',
+            type: 'type', // the type 'type' is not editable
             required: true,
             validator: validators.enum,
             parameters: [['div', 'span']],
             default(){ return 'div' },
+        },
+        defaultSlot: {
+            type: 'slot',
+            required: false,
         },
         position: {
             type: 'styleProp',
@@ -246,35 +260,117 @@
         },
     }
 
-    function ingest(c: any[]) {
-        try {
-            content.value = c.map(element => ingestElement(element))
-        }
-        catch (error) {
-            throw error
-        }
+    function ingest(c: StringKeyObject[]): StringKeyObject[] {
+        return c.map(element => ingestElement(element))
     }
 
-    function ingestElement(element: any) {
-        try {
-            let result = {}
-            const requiredProps = Object.keys(elementPropConfig).filter(prop => elementPropConfig[prop].required === true)
+    function ingestElement(element: StringKeyObject) {
+        let sanitizedElement: StringKeyObject = {}
+        
+        for (const key in elementPropConfig) {
+            let config = elementPropConfig[key]
+            let value = element[key]
 
-            for (const prop of requiredProps) {
-                let config = elementPropConfig[prop]
-                if (!config) continue
+            // Not required and not set
+            if (!config.required && value === undefined) {
+                continue
+            }
+            // Required and not set
+            else if (config.required && value === undefined) {
+                value = config.default()
+            }
+            // Set
+            else {
+                try {
+                    value = config.validator(value, ...config.parameters)
+                }
+                catch (error) {
+                    value = config.default()
+                }
+            }
+
+            sanitizedElement[key] = value
+        }
+
+        return sanitizedElement
+    }
+
+
+
+    function findElementPath( elements: StringKeyObject[], id: string, path: (string | number)[] = []): (string | number)[] | null {
+        for (let i = 0; i < elements.length; i++) {
+            const element = elements[i]
+            if (element.elementId === id) return [...path, i]
+
+            // Suche in Slots
+            for (const key in element) {
+                if (key.startsWith('slot_') || key === 'slot') {
+                    const slotElements = element[key]
+
+                    if (Array.isArray(slotElements)) {
+                        const result = findElementPath(slotElements, id, [...path, key])
+                        if (result) return result
+                    }
+                }
             }
         }
-        catch (error) {
-            throw error
+
+        return null
+    }
+
+
+
+    function insertElement(
+        element: StringKeyObject,
+        position: 'first' | 'last' | 'before' | 'after',
+        anchor?: StringKeyObject,
+        slot: string = 'slot'
+    ): void {
+        // Pfad zu Anchor-Element finden, falls vorhanden
+        let targetArray = content.value
+        let anchorIndex = -1
+
+        if (anchor) {
+            const path = findElementPath(content.value, anchor.elementId)
+            if (!path) throw new Error('Anchor element not found')
+
+            // Navigiere zu Target-Array
+            for (const key in path) {
+                targetArray = targetArray[key] as StringKeyObject[]
+            }
+
+            anchorIndex = path[path.length - 1] as number
+
+            if (position === 'first' || position === 'last') {
+                targetArray = targetArray[slot]
+                if (targetArray === undefined) throw new Error('Anchor element has no slot')
+            }
+        }
+
+        // Element einfügen basierend auf der Position
+        switch (position) {
+            case 'first':
+                targetArray.unshift(element);
+                break;
+            case 'last':
+                targetArray.push(element);
+                break;
+            case 'before':
+                if (anchorIndex === -1) throw new Error('Anchor required for position "before"');
+                targetArray.splice(anchorIndex, 0, element);
+                break;
+            case 'after':
+                if (anchorIndex === -1) throw new Error('Anchor required for position "after"');
+                targetArray.splice(anchorIndex + 1, 0, element);
+                break;
+            default:
+                throw new Error('Invalid position');
         }
     }
 
-    onMounted(() => {
-        // get array of all parser props that are required
-        const requiredParserProps = Object.keys(elementPropConfig).filter(key => elementPropConfig[key].required === true)
-        
-        console.log(requiredParserProps)
+    watch(props, () => {content.value = ingest(props.content)}, {
+        immediate: true,
+        deep: true,
     })
 </script>
 

@@ -10,9 +10,9 @@
 
     const content = ref([
         {
-            elementId: '678451367',
+            elementId: 'c5e7eabe-ccc7-4b69-9ba1-90c70193f436',
             elementName: 'Element 1',
-            elementType: 'div',
+            elementType: 'span',
             position: 'fixed',
             zIndex: 1,
             top: '0px',
